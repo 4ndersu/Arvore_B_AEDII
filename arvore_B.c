@@ -7,7 +7,9 @@
 
 #define T 2 //Grau minimo
 #define MAX (2*T-1) //Numero maximo de chaves
-#define MIN (T-1) //Numero minimo de chaves
+#define MIN (T-1) //Numero minimo de chav
+
+//--------------Criação e liberação da arvore B e dos nós-----------------
 
 //Estrutura de um nó da árvore B
 typedef struct node {
@@ -82,6 +84,8 @@ void BTreeFree(BTree* tree) {
         free(tree);
     }
 }
+
+//-----------------Funções auxiliares para inspeção e remoção-----------------
 
 //Função para buscar uma chave em um nó da árvore B
 Node* searchNode(Node* node, int key) {
@@ -408,10 +412,436 @@ bool Btree_delete(BTree* tree, int k) {
     return removed;
 }
 
+//-----------------Funções auxiliarespara testes ----------
+
+//Retorna o número total de chaves da subárvore com raiz em x
+int Btree_size(Node* x) {
+    if (x == NULL) {
+        return 0;
+    }
+
+    //Conta as chaves do próprio nó
+    int total = x->n;
+
+    //Soma as chaves de cada um dos n+1 filhos (folhas não têm filhos)
+    if (!x->leaf) {
+        for (int i = 0; i <= x->n; i++) {
+            total += Btree_size(x->children[i]);
+        }
+    }
+    return total;
+}
+
+//Imprime as chaves da subárvore com raiz em x em ordem crescente (em-ordem)
+void Btree_printRec(Node* x) {
+    if (x == NULL) {
+        return;
+    }
+
+    for (int i = 0; i < x->n; i++) {
+        //Imprime primeiro tudo o que é menor que keys[i]
+        if (!x->leaf) {
+            Btree_printRec(x->children[i]);
+        }
+        printf("%02d ", x->keys[i]);
+    }
+
+    //Por último, o filho mais à direita (maiores que keys[n-1])
+    if (!x->leaf) {
+        Btree_printRec(x->children[x->n]);
+    }
+}
+
+//Imprime a árvore em uma linha em ordem crescente
+void Btree_print(BTree* tree) {
+    printf("BTree: [ ");
+    Btree_printRec(tree->root);
+    printf("]\n");
+}
+
+//Guarda em arr as chaves da subárvore com raiz em x, em ordem crescente.
+//*index é a próxima posição livre de arr.
+void Btree_store(Node* x, int* arr, int* index) {
+    if (x == NULL) {
+        return;
+    }
+
+    for (int i = 0; i < x->n; i++) {
+        //Primeiro tudo o que é menor que keys[i]
+        if (!x->leaf) {
+            Btree_store(x->children[i], arr, index);
+        }
+        arr[(*index)++] = x->keys[i];
+    }
+
+    //Por último, o filho mais à direita
+    if (!x->leaf) {
+        Btree_store(x->children[x->n], arr, index);
+    }
+}
+
+//Comparador para qsort (não depende da árvore, então serve igual)
+int int_comp(const void* a, const void* b) {
+    int x = *(const int*)a;
+    int y = *(const int*)b;
+    return (x > y) - (x < y);
+}
+
+//-----------------Funções auxiliares: propriedades da árvore B-----------------
+
+//Propriedade 1: número de chaves de cada nó dentro dos limites.
+//  - todo nó tem no máximo MAX = 2T-1 chaves;
+//  - todo nó, exceto a raiz, tem no mínimo MIN = T-1 chaves;
+//  - a raiz interna tem pelo menos 1 chave (a raiz folha pode ter 0: árvore vazia).
+bool Btree_checkKeyCount(Node* x, bool isRoot) {
+    if (x->n > MAX) {
+        return false;
+    }
+    if (!isRoot && x->n < MIN) {
+        return false;
+    }
+    if (isRoot && !x->leaf && x->n < 1) {
+        return false;
+    }
+
+    //Confere os filhos (nó interno tem exatamente n+1 filhos)
+    if (!x->leaf) {
+        for (int i = 0; i <= x->n; i++) {
+            if (x->children[i] == NULL) {
+                return false;
+            }
+            if (!Btree_checkKeyCount(x->children[i], false)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+//Propriedade 2: chaves em ordem não decrescente dentro do nó e dentro da faixa
+//que o pai permite (lo e hi são os limites herdados; NULL = sem limite).
+//Para o filho i de x: keys[i-1] <= chaves do filho <= keys[i].
+bool Btree_checkOrder(Node* x, const int* lo, const int* hi) {
+    //Ordem dentro do nó
+    for (int i = 1; i < x->n; i++) {
+        if (x->keys[i - 1] > x->keys[i]) {
+            return false;
+        }
+    }
+
+    //Todas as chaves do nó devem estar dentro da faixa [lo, hi]
+    if (x->n > 0) {
+        if (lo != NULL && x->keys[0] < *lo) {
+            return false;
+        }
+        if (hi != NULL && x->keys[x->n - 1] > *hi) {
+            return false;
+        }
+    }
+
+    if (x->leaf) {
+        return true;
+    }
+
+    //Cada filho recebe a faixa delimitada pelas chaves vizinhas de x
+    for (int i = 0; i <= x->n; i++) {
+        if (x->children[i] == NULL) {
+            return false;
+        }
+        const int* l = (i == 0) ? lo : &x->keys[i - 1];
+        const int* h = (i == x->n) ? hi : &x->keys[i];
+        if (!Btree_checkOrder(x->children[i], l, h)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+//Propriedade 3: todas as folhas têm a mesma profundidade.
+//*leafDepth começa em -1 e guarda a profundidade da primeira folha encontrada.
+bool Btree_checkLeafDepth(Node* x, int depth, int* leafDepth) {
+    if (x->leaf) {
+        if (*leafDepth < 0) {
+            *leafDepth = depth;
+        }
+        return *leafDepth == depth;
+    }
+
+    for (int i = 0; i <= x->n; i++) {
+        if (x->children[i] == NULL) {
+            return false;
+        }
+        if (!Btree_checkLeafDepth(x->children[i], depth + 1, leafDepth)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+//Altura da árvore (número de arestas da raiz até uma folha)
+int Btree_height(Node* x) {
+    int h = 0;
+    while (!x->leaf) {
+        x = x->children[0];
+        h++;
+    }
+    return h;
+}
+
+//Teorema 18.1: se N >= 1, então N >= 2*T^h - 1 (ou seja, h <= log_T((N+1)/2))
+bool Btree_checkHeight(BTree* tree, int N) {
+    if (N == 0) {
+        return true;
+    }
+    int h = Btree_height(tree->root);
+    long pw = 1;
+    for (int i = 0; i < h; i++) {
+        pw *= T;
+    }
+    return N >= 2 * pw - 1;
+}
+
+//-----------------Verificação completa-----------------
+
+//Verifica todas as propriedades da árvore B + conteúdo dos dados
+//data são os N valores que deveriam estar na árvore (em qualquer ordem)
+bool Btree_check(BTree* tree, const int* const data, const int N) {
+    if (tree == NULL || tree->root == NULL) {
+        return false;
+    }
+
+    //Quantidade de chaves precisa bater com o esperado
+    const int tsize = Btree_size(tree->root);
+    if (tsize != N) {
+        return false;
+    }
+
+    //Propriedades estruturais (feitas antes de percorrer a árvore para extrair
+    //os valores, pois garantem que não há filhos NULL em nós internos)
+    if (!Btree_checkKeyCount(tree->root, true)) {
+        return false;
+    }
+    if (N == 0) {
+        return true;
+    }
+    if (!Btree_checkOrder(tree->root, NULL, NULL)) {
+        return false;
+    }
+    int leafDepth = -1;
+    if (!Btree_checkLeafDepth(tree->root, 0, &leafDepth)) {
+        return false;
+    }
+    if (!Btree_checkHeight(tree, N)) {
+        return false;
+    }
+
+    //Conteúdo: ordena uma cópia dos dados esperados
+    int* arr = (int*)malloc(sizeof(int) * N);
+    int* tarr = (int*)malloc(sizeof(int) * tsize);
+    if (arr == NULL || tarr == NULL) {
+        free(arr);
+        free(tarr);
+        return false;
+    }
+    memcpy(arr, data, sizeof(int) * N);
+    qsort(arr, N, sizeof(int), int_comp);
+
+    //e extrai os valores da árvore em ordem crescente
+    int index = 0;
+    Btree_store(tree->root, tarr, &index);
+
+    //Os dois vetores ordenados devem ser idênticos
+    bool match = (index == N);
+    for (int i = 0; i < N && match; i++) {
+        if (arr[i] != tarr[i]) {
+            match = false;
+        }
+    }
+
+    //Libera os valores auxiliares da memória
+    free(tarr);
+    free(arr);
+
+    //Retorna se é uma árvore B válida com os dados esperados
+    return match;
+}
+
+//Imprime a árvore B "deitada" (a raiz fica à esquerda): filhos de índice
+//maior acima do nó, filhos de índice menor abaixo.
+void Btree_printTreeRec(Node* x, int space) {
+    if (x == NULL) {
+        return;
+    }
+
+    space += 4;
+
+    //Filhos da metade direita (do último até o do meio), acima do nó
+    int mid = (x->n + 1) / 2;
+    if (!x->leaf) {
+        for (int i = x->n; i >= mid; i--) {
+            Btree_printTreeRec(x->children[i], space);
+        }
+    }
+
+    //O nó em si: todas as chaves em uma linha
+    printf("\n");
+    for (int i = 4; i < space; i++) {
+        printf(" ");
+    }
+    printf("[");
+    for (int i = 0; i < x->n; i++) {
+        printf(i ? " %02d" : "%02d", x->keys[i]);
+    }
+    printf("]\n");
+
+    //Filhos da metade esquerda (do primeiro até antes do meio), abaixo do nó
+    if (!x->leaf) {
+        for (int i = mid - 1; i >= 0; i--) {
+            Btree_printTreeRec(x->children[i], space);
+        }
+    }
+}
+
+void Btree_printTree(BTree* tree) {
+    Btree_printTreeRec(tree->root, 0);
+}
+
+/*------------------------------------------------------------------------------
+ * Permutação de um Arranjo
+ *
+ * Implementan o algoritmo iterativo de Narayana Pandita para a permutação de
+ * um arranjo em ordem lexicográfica.
+ */
+
+void swap(int *a, int *b)
+{
+    const int temp = *a;
+    *a = *b;
+    *b = temp;
+}
+
+void perm_invert(int *arr, int inicio, int fim)
+{
+    while (inicio < fim) {
+        swap(&arr[inicio], &arr[fim]);
+        inicio++;
+        fim--;
+    }
+}
+
+bool perm_next(int *arr, int tamanho)
+{
+    int i = tamanho - 2;
+
+    while (i >= 0 && arr[i] >= arr[i + 1]) {
+        i--;
+    }
+
+    if (i < 0) {
+        return false;
+    }
+
+    int j = tamanho - 1;
+    while (arr[j] <= arr[i]) {
+        j--;
+    }
+
+    swap(&arr[i], &arr[j]);
+
+    perm_invert(arr, i + 1, tamanho - 1);
+
+    return true;
+}
+
+/*------------------------------------------------------------------------------
+ * Funções Auxiliares
+ */
+
+void data_print(const int * const data, const int N)
+{
+    printf("data: [ ");
+    for (int i = 0; i < N; i++) {
+        printf("%02d ", data[i]);
+    }
+    printf("]\n");
+}
+
+int arr_remove(int *arr, int N, int value)
+{
+    for (int i = 0; i < N; i++) {
+        if (arr[i] == value) {
+            for (int j = i; j < N - 1; j++) {
+                arr[j] = arr[j + 1];
+            }
+            N--;
+            i--;
+        }
+    }
+
+    return N;
+}
+
 int main() {
 
     int DATA_INSERT[] = {10, 23, 39, 50, 67};
     int DATA_REMOVE[] = {10, 23, 39, 50, 67};
+    const int N = 5; // tamanho dos arranjos de inserção e remoção
+
+    int *data_insert, *data_remove;
+
+    data_insert = (int *)malloc(sizeof(int) * N);
+    memcpy(data_insert, DATA_INSERT, sizeof(int) * N);
+
+    do { // Loop de Inserção
+
+        data_remove = (int *)malloc(sizeof(int) * N);
+        memcpy(data_remove, DATA_REMOVE, sizeof(int) * N);
+
+        do { // Loop de Remoção
+            BTree *tree = createBTree();
+            assert(tree != NULL);
+
+            printf("--------------------------------------------\n");
+            printf("Dados para Insercao:\n\t");
+            data_print(data_insert, N);
+
+            for (int i = 0; i < N; i++) {
+                printf("Inserindo: %02d\n", data_insert[i]);
+                Btree_insert(tree, data_insert[i]);
+                Btree_print(tree);
+                assert(Btree_check(tree, data_insert, i + 1));
+            }
+
+            printf("Arvore apos todas as INSERCOES:\n");
+            Btree_printTree(tree);
+
+            printf("Dados para Remocao:\n\t");
+            data_print(data_remove, N);
+            int *arr = (int *)malloc(sizeof(int) * N);
+            int asize = N;
+            memcpy(arr, data_insert, sizeof(int) * asize);
+
+            for (int i = 0; i < N; i++) {
+                printf("Removendo: %02d\n", data_remove[i]);
+                assert(Btree_delete(tree, data_remove[i])); // a chave existe
+                Btree_print(tree);
+                asize = arr_remove(arr, asize, data_remove[i]);
+                assert(Btree_check(tree, arr, asize));
+            }
+
+            printf("Arvore apos todas as REMOCOES:\n");
+            Btree_printTree(tree);
+
+            free(arr);
+            BTreeFree(tree);
+
+        } while (perm_next(data_remove, N));
+
+        free(data_remove);
+
+    } while (perm_next(data_insert, N));
+
+    free(data_insert);
 
     return EXIT_SUCCESS;
 }
