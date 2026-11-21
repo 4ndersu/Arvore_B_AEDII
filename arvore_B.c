@@ -809,6 +809,7 @@ int main() {
                 printf("Inserindo: %02d\n", data_insert[i]);
                 Btree_insert(tree, data_insert[i]);
                 Btree_print(tree);
+                Btree_printTree(tree);   
                 assert(Btree_check(tree, data_insert, i + 1));
             }
 
@@ -823,8 +824,11 @@ int main() {
 
             for (int i = 0; i < N; i++) {
                 printf("Removendo: %02d\n", data_remove[i]);
-                assert(Btree_delete(tree, data_remove[i])); // a chave existe
+                bool removed = Btree_delete(tree, data_remove[i]);
+                assert(removed); // a chave existe
+                (void)removed; 
                 Btree_print(tree);
+                Btree_printTree(tree);   
                 asize = arr_remove(arr, asize, data_remove[i]);
                 assert(Btree_check(tree, arr, asize));
             }
